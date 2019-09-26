@@ -6,6 +6,9 @@
 
 struct threadData;
 
+enum class ErrorCode { IN_PROGRESS, FINISHED_SUCCESSFULLY, ERROR };
+using Func = std::function<ErrorCode(void*)>;
+
 class PThreadPool
 {
 	const unsigned threadCount_;
@@ -28,8 +31,9 @@ public:
 	* runs task in separate thread from the pool
 	* if all threads were busy, function would block current thread until one of threads has become freed to run this task.
 	*/
-	bool addTaskToRun(std::function<void(void*)> func, void* arg = nullptr, unsigned argSize = 0);
+	bool addTaskToRun(const Func& func, void* arg = nullptr, unsigned argSize = 0);
 	void waitTasksFinished() const;
+	void terminate() const;
 };
 
 #endif //!P_THREAD_POOL_H

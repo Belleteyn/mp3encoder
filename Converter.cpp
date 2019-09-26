@@ -12,68 +12,80 @@ struct pathWrapper {
 	char* path;
 };
 
-void convert(void* arg) {
-
+ErrorCode convert(void* arg) 
+{
 	pathWrapper* wrappedPath = reinterpret_cast<pathWrapper*>(arg);
 	fs::path inputFilePath(std::string(wrappedPath->path, wrappedPath->size));
 	
 	try {
 		LameConverter converter(inputFilePath);
 		converter();
+		return ErrorCode::FINISHED_SUCCESSFULLY;
 	}
 	catch (std::exception& ex) {
-		std::cout << "error on converting " << inputFilePath << ": " << ex.what() << std::endl;
+		std::cout << "Conversion failed for " << inputFilePath << ": " << ex.what() << std::endl;
+		return ErrorCode::ERROR;
 	}
 }
 
-int main()
+int main(int argc, char** argv)
 {
-	//NOTE: is this allowed?
-	unsigned concurentThreadsSupported = std::thread::hardware_concurrency();
-	if (concurentThreadsSupported == 0) {
-		concurentThreadsSupported = 2;
+	std::string folder = "";
+
+	if (argc == 2) {	
+		std::cout << argv[1] << "\n";
+		folder = argv[1];
 	}
-	//concurentThreadsSupported = 2;
-
-	PThreadPool pool(concurentThreadsSupported);
-
-	std::string folder = "C:/Users/user/source/repos/Converter/Converter/dataSource";
-	//TODO: ask about filesystem, possibility to use
-	//TODO: recursive directory - ?
+	else {
+		std::cout << "Directory path for converting is missing\n";
+		return -1;
+		//folder = "c:/Users/user/source/repos/Converter/Converter/dataSource";
+	}
+	
+	std::cout << folder << std::endl;
 
 	try {
 		fs::path path(folder);
 		fs::directory_entry dir(path);
 
-		std::cout << "Source directory: " << dir.path() << '\n' << '\n';
-		//TODO: are such logs needed?
-
 		if (!dir.is_directory()) {
-			std::cout << "no such dir\n";
+			std::cout << "directory " << folder << " does not exist\n";
 			return -1;
 		}
 
-		//WARNING: corrupts stack on path cout with recursive iterator
-		for (auto& p : fs::recursive_directory_iterator(path)) {
+		unsigned concurentThreadsSupported = std::thread::hardware_concurrency();
+		if (concurentThreadsSupported == 0) {
+			concurentThreadsSupported = 2;
+		}
+
+		PThreadPool pool(concurentThreadsSupported);
+
+		for (auto& p : fs::directory_iterator(path)) {
 			if (p.path().has_extension() && p.path().extension() == ".wav") {
+				const std::string& pathStr = p.path().string();
+				
 				pathWrapper wrapper;
-				std::string pathStr = p.path().string();
 				wrapper.size = pathStr.length() * sizeof(char);
 				wrapper.path = new char[wrapper.size];
 				std::memcpy(wrapper.path, pathStr.c_str(), wrapper.size);
 
-				pool.addTaskToRun(&convert, static_cast<void*>(&wrapper), sizeof(pathWrapper));
-
+				try {
+					pool.addTaskToRun(&convert, static_cast<void*>(&wrapper), sizeof(pathWrapper));
+				}
+				catch (const std::exception& ex) {
+					std::cout << "run task failed: " << ex.what() << std::endl;
+					pool.terminate();
+					return -1;
+				}
 			}
 		}
-
-		//pool.waitTasksFinished();
 	}
 	catch (const std::exception& ex) {
-		std::cout << ex.what() << std::endl;
+		std::cout << "exception " << ex.what() << std::endl;
 		return -1;
 	}
 	catch (...) {
+		std::cout << "unknown error\n";
 		return -1;
 	}
 
