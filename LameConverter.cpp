@@ -25,23 +25,23 @@ class LameConverterPrivate
 	{
 		lame_ = lame_init();
 		if (!lame_) {
-			throw std::exception("lame init failed");
+			throw std::runtime_error("lame init failed");
 		}
 
 		//NOTE: do i need to set it? quality?
 		if (lame_set_in_samplerate(lame_, header_.sampleFreq) < 0) {
-			throw std::exception("in samplerate configure failed");
+			throw std::runtime_error("in samplerate configure failed");
 		}
 		if (lame_set_out_samplerate(lame_, header_.sampleFreq) < 0) {
-			throw std::exception("out samplerate configure failed");
+			throw std::runtime_error("out samplerate configure failed");
 		}
 		if (lame_set_num_channels(lame_, header_.channelFlag == 0x01 ? 1 : 2) < 0) {
-			throw std::exception("channels configure failed");
+			throw std::runtime_error("channels configure failed");
 		}
 
 		int initParamsRes = lame_init_params(lame_);
 		if (initParamsRes == -1) {
-			throw std::exception("lame params init failed");
+			throw std::runtime_error("lame params init failed");
 		}
 
 		//lame_print_config(lame_);
@@ -49,7 +49,7 @@ class LameConverterPrivate
 	}
 
 public:
-	LameConverterPrivate(const std::filesystem::path& inputFilePath)
+	LameConverterPrivate(const fs::path& inputFilePath)
 		: input_(nullptr)
 		, output_(nullptr)
 		, lame_(nullptr)
@@ -61,18 +61,16 @@ public:
 		auto outputFilePath = inputFilePath;
 		outputFilePath.replace_extension(".mp3");
 
-		//override file if exists?
-		//std::cout << "processing file " << inputFilePath << " -> " << outputFilePath << '\n';
 		input_ = std::make_unique<std::ifstream>(std::ifstream(inputFilePath, std::ifstream::binary));
 		output_ = std::make_unique<std::ofstream>(std::ofstream(outputFilePath, std::ofstream::binary | std::ofstream::out));
 		
 		if (!input_->is_open()) {
-			throw std::exception("input open error");
+			throw std::runtime_error("input open error");
 		}
 
 		input_->read(reinterpret_cast<char*>(&header_), sizeof(WavHeader));
 		if (input_->gcount() < sizeof(WavHeader)) {
-			throw std::exception("wav header not found");
+			throw std::runtime_error("wav header not found");
 		}
 
 		pcmBufSize_ = static_cast<int>(1.25 * header_.bitsPerSample) + 7200;
@@ -80,7 +78,7 @@ public:
 
 		pcmBuffer_ = new(std::nothrow) short[pcmBufSize_ * 2];
 		if (!pcmBuffer_) {
-			throw std::exception("buffer memory allocation failed");
+			throw std::runtime_error("buffer memory allocation failed");
 		}
 
 		mp3Buffer_ = new(std::nothrow) unsigned char[mp3BufSize_];
@@ -90,7 +88,7 @@ public:
 			delete[] pcmBuffer_;
 			pcmBuffer_ = nullptr;
 
-			throw std::exception("buffer memory allocation failed");
+			throw std::runtime_error("buffer memory allocation failed");
 		}
 	}
 
@@ -128,7 +126,7 @@ public:
 
 		std::streamsize readBytes = 0, writeBytes = 0;
 
-		while (!input_->eof()) { //reading error - ?
+		while (!input_->eof()) {
 			input_->read(reinterpret_cast<char*>(pcmBuffer_), static_cast<std::streamsize>(pcmBufSize_) * 2 * sizeof(short));
 			readBytes = input_->gcount();
 
@@ -157,7 +155,7 @@ public:
 	}
 };
 
-LameConverter::LameConverter(const std::filesystem::path& inputFilePath) 
+LameConverter::LameConverter(const fs::path& inputFilePath) 
 	: pimpl(new LameConverterPrivate(inputFilePath))
 {
 

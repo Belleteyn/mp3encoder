@@ -1,14 +1,21 @@
 #include "PThreadPool.h"
 
+#if defined (_MSC_VER)
 #define HAVE_STRUCT_TIMESPEC
 #define PTW32_USES_SEPARATE_CRT
-#include <pthread.h>
+
+#include <time.h>
 #include <stdexcept>
-#include <chrono>
+#else
+#include <memory>
+#include <cstring>
+#endif
+
+#include <pthread.h>
 
 static std::atomic<unsigned> tasksCount;
 
-struct threadData {
+struct ThreadTaskData {
 	std::atomic<ErrorCode> errorCode = ErrorCode::IN_PROGRESS;
 
 	std::unique_ptr<pthread_t> thread = nullptr;
@@ -19,14 +26,14 @@ struct threadData {
 	void* arg = nullptr;
 };
 
-void* runThread(threadData* data) {
+void* runThread(ThreadTaskData* data) {
 	if (!data) {
 		return 0;
 	}
 
 	data->errorCode = data->routine(data->arg);
 	if (data->arg) {
-		delete data->arg;
+		std::free(data->arg);
 		data->arg = nullptr;
 	}
 	
@@ -37,11 +44,9 @@ void* runThread(threadData* data) {
 	pthread_mutex_unlock(&data->mutex);
 
 	pthread_exit(&data->thread);
-
-	return 0;
 }
 
-int PThreadPool::getFreeThreadIndex() const
+int PThreadPool::getFreeThreadIndex() const noexcept
 {
 	for (unsigned i = 0; i < threadCount_; i++) {
 		if (!data_[i].thread) {
@@ -58,37 +63,43 @@ unsigned PThreadPool::waitFreedThread() const
 	if (freeThreadIndex != -1) {
 		return freeThreadIndex;
 	}
-	else {
-		static unsigned waitIndex = 0;
-		threadData* data = &data_[waitIndex];
-		waitIndex = (waitIndex + 1) % threadCount_;
 
-		timespec waitTime;
-		if (timespec_get(&waitTime, TIME_UTC) == 0) {
-			waitTime.tv_sec += 1;
-		}
-		else {
-			throw std::runtime_error("timespec_get failed");
-		}
-				
+	static unsigned waitIndex = 0;
+	ThreadTaskData* data = &data_[waitIndex];
+	waitIndex = (waitIndex + 1) % threadCount_;
+
+	timespec waitTime;
+#if defined (_MSC_VER)
+	auto errorCode = timespec_get(&waitTime, TIME_UTC);
+	if (errorCode != 0) {
+		waitTime.tv_sec += 1;
+	}
+	else {
+		throw std::runtime_error("timespec_get failed");
+	}
+#else
+	waitTime.tv_nsec = 0;
+	waitTime.tv_sec = time(NULL) + 1;
+#endif
+		
+	while (data->errorCode == ErrorCode::IN_PROGRESS)
+	{
 		pthread_mutex_lock(&data->mutex);
-		while (data->errorCode == ErrorCode::IN_PROGRESS)
-		{
-			int err = pthread_cond_timedwait(&data->cond, &data->mutex, &waitTime);
-			if (err == ETIMEDOUT) {
-				return waitFreedThread();
-			}
-		}
+		int err = pthread_cond_timedwait(&data->cond, &data->mutex, &waitTime);
 		pthread_mutex_unlock(&data->mutex);
 
-		data->thread = nullptr;
-		return waitFreedThread();
+		if (err == ETIMEDOUT) {
+			return waitFreedThread();
+		}
 	}
+
+	data->thread = nullptr;
+	return waitFreedThread();
 }
 
 PThreadPool::PThreadPool(unsigned count)
 	: threadCount_(count)
-	, data_(new threadData[count])
+	, data_(new ThreadTaskData[count])
 {}
 
 PThreadPool::~PThreadPool()
@@ -96,13 +107,11 @@ PThreadPool::~PThreadPool()
 	waitTasksFinished();
 	
 	delete[] data_;
-	pthread_exit(NULL);
+	pthread_exit(0);
 }
 
 bool PThreadPool::addTaskToRun(const Func& func, void* arg /*= nullptr*/, unsigned argSize /*= 0*/)
 {
-	tasksCount++;
-
 	int index = getFreeThreadIndex();
 	if (index == -1) {
 		index = waitFreedThread();
@@ -127,6 +136,7 @@ bool PThreadPool::addTaskToRun(const Func& func, void* arg /*= nullptr*/, unsign
 		return false;
 	}
 	
+	tasksCount++;
 	return true;
 }
 
